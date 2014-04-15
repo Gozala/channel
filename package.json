@@ -1,0 +1,41 @@
+{
+  "name": "channeljs",
+  "version": "0.0.0",
+  "description": "CSP style channel implementation, for the Channel specification",
+  "author": "Irakli Gozalishvili <rfobic@gmail.com> (http://jeditoolkit.com)",
+  "homepage": "https://github.com/gozala/channel",
+  "keywords": [
+    "streams",
+    "channels",
+    "csp",
+    "whatwg",
+    "w3c",
+    "strawman",
+    "reference"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/gozala/channel.git",
+    "web": "https://github.com/Gozala/channel"
+  },
+  "bugs": {
+    "url": "https://github.com/gozala/channel/issues"
+  },
+  "license": "MIT",
+  "main": "index.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "tap test/*.js"
+  },
+  "dependencies": {
+    "es6-promise": "~0.1.1",
+    "gnode": "~0.0.7"
+  },
+  "devDependencies": {
+    "tape": "~2.3.2",
+    "tap": "~0.4.8",
+    "stringencoding": "~0.0.0"
+  }
+}
