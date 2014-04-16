@@ -1,6 +1,6 @@
 "use strict";
 
-var test = require("tape")
+var test = require("./test")
 var Channel = require("../index").Channel
 var Port = require("../index").Port
 var InputPort = require("../index").InputPort
