@@ -1,7 +1,5 @@
 "use strict";
 
-var gnode = require("gnode")
-
 function spawn(routine) {
   return new Promise(function(resolve, reject) {
     var task = routine()
