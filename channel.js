@@ -147,40 +147,28 @@ function take(port, race) {
   if (take[$isActive]()) {
     // If there is buffered values take first one that
     // was put.
-    if (buffer && !buffer.isEmpty()) {
-      take[$complete](buffer.take())
-      // If there's a queued up puts move them to the
-      // buffer until it's full or put queue is drained.
-      var put = void(0)
-      while (!buffer.isFull() && (put = puts.pop())) {
-        if (put[$isActive]()) {
+    if (buffer) {
+      if (!buffer.isEmpty()) {
+        take[$complete](buffer.take())
+        var put = void(0)
+        while (!buffer.isFull() && (put = dequeue(puts))) {
           put[$complete](true)
           buffer.put(put.value)
         }
+      } else if (closed.valueOf()) {
+        take[$complete](void(0))
+      } else {
+        enqueue(takes, take)
       }
     } else {
-      var put = void(0)
-      while (put = puts.pop()) {
-        if (put[$isActive]()) break
-      }
-
+      var put = dequeue(puts)
       if (put) {
         put[$complete](true)
         take[$complete](put.value)
-      }
-      // If values are buffered and channel is closed
-      // void returning promise.
-      else if (closed.valueOf()) {
+      } else if (closed.valueOf()) {
         take[$complete](void(0))
-      }
-      // Otherwise queue up a take.
-      else {
-        if (takes.length >= MAX_QUEUE_SIZE) {
-          throw new Error("No more than " + MAX_QUEUE_SIZE +
-                          " pending takes are allowed on a single channel.")
-        } else {
-          takes.unshift(take)
-        }
+      } else {
+        enqueue(takes, take)
       }
     }
   }
