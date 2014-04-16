@@ -1,6 +1,6 @@
 {
-  "name": "channeljs",
-  "version": "0.0.0",
+  "name": "channel",
+  "version": "0.0.1",
   "description": "CSP style channel implementation, for the Channel specification",
   "author": "Irakli Gozalishvili <rfobic@gmail.com> (http://jeditoolkit.com)",
   "homepage": "https://github.com/gozala/channel",
