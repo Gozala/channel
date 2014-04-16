@@ -5,6 +5,7 @@ var FixedBuffer = require("./buffer").FixedBuffer
 
 // Private symbols are no yet present in the language but
 // we emulate them via this strings.
+var $channel = "@@port/channel"
 var $closed = "@@channel/closed"
 var $buffer = "@@channel/buffer"
 var $puts = "@@channel/pending-puts"
@@ -117,6 +118,9 @@ Put.prototype = Object.create(Operation.prototype)
 Put.prototype.constructor = Put
 Put.prototype.Put = Put
 
+// Takes operation queue in form of array and pops operations
+// until first active one is discovered, which is returned back.
+// If no active operation is discovered then return is void.
 function dequeue(queue) {
   while (queue.length) {
     var operation = queue.pop()
@@ -125,6 +129,8 @@ function dequeue(queue) {
   }
 }
 
+// Takes operation queue in form of array and adds passed operation
+// into a queue. If queue reached MAX_QUEUE_SIZE exception is thrown.
 function enqueue(queue, operation) {
   if (queue.length >=  MAX_QUEUE_SIZE) {
     throw new Error("No more than " + MAX_QUEUE_SIZE +
@@ -138,10 +144,11 @@ function take(port, race) {
   if (!(port instanceof InputPort))
     throw TypeError("Can only take from input port")
 
-  var buffer = port[$buffer]
-  var puts = port[$puts]
-  var takes = port[$takes]
-  var closed = port[$closed]
+  var channel = port[$channel]
+  var buffer = channel[$buffer]
+  var puts = channel[$puts]
+  var takes = channel[$takes]
+  var closed = channel[$closed]
   var take = new Take(race)
 
   if (take[$isActive]()) {
@@ -180,10 +187,11 @@ function put(port, value, race) {
   if (!(port instanceof OutputPort))
     throw TypeError("Can only put onto output port")
 
-  var buffer = port[$buffer]
-  var puts = port[$puts]
-  var takes = port[$takes]
-  var closed = port[$closed]
+  var channel = port[$channel]
+  var buffer = channel[$buffer]
+  var puts = channel[$puts]
+  var takes = channel[$takes]
+  var closed = channel[$closed]
   var put = new Put(value, race)
 
   if (put[$isActive]()) {
@@ -246,11 +254,8 @@ function put(port, value, race) {
 // ends of the channel implement, they share same
 // buffer put & take queues and a closed state,
 // which are provided at the instantiation.
-function Port(buffer, puts, takes, closed) {
-  this[$buffer] = buffer
-  this[$puts] = puts
-  this[$takes] = takes
-  this[$closed] = closed
+function Port(channel) {
+  this[$channel] = channel
 }
 Port.prototype.Port = Port
 // When either (input / output) port is closed
@@ -259,8 +264,9 @@ Port.prototype.Port = Port
 // state is also reset to `true` to reflect
 // it on both ends of the channel.
 Port.prototype.close = function() {
-  var closed = this[$closed]
-  var takes = this[$takes]
+  var channel = this[$channel]
+  var closed = channel[$closed]
+  var takes = channel[$takes]
 
   if (!closed.valueOf()) {
     closed.reset(true)
@@ -276,8 +282,8 @@ exports.Port = Port
 
 // InputPort is input endpoint of the channel that
 // can be used to take values out of the channel.
-function InputPort(buffer, puts, takes, closed) {
-  this.Port(buffer, puts, takes, closed)
+function InputPort(channel) {
+  this.Port(channel)
 }
 InputPort.prototype = Object.create(Port.prototype)
 InputPort.prototype.constructor = InputPort
@@ -290,8 +296,8 @@ exports.InputPort = InputPort
 
 // `OutputPort` is an output endpoint of the channel
 // that can be used to put values onto channel.
-function OutputPort(buffer, puts, takes, closed) {
-  this.Port(buffer, puts, takes, closed)
+function OutputPort(channel) {
+  this.Port(channel)
 }
 OutputPort.prototype = Object.create(Port.prototype)
 OutputPort.prototype.constructor = OutputPort
@@ -303,15 +309,16 @@ exports.OutputPort = OutputPort
 
 
 function Channel(buffer) {
-  buffer = buffer === void(0) ? buffer :
-           buffer <= 0 ? void(0) :
-           typeof(buffer) === "number" ? new FixedBuffer(buffer) :
-           buffer;
+  this[$buffer] = buffer === void(0) ? buffer :
+                  buffer <= 0 ? void(0) :
+                  typeof(buffer) === "number" ? new FixedBuffer(buffer) :
+                  buffer
+  this[$puts] = []
+  this[$takes] = []
+  this[$closed] = new Atom(false)
 
-  var puts = [], takes = [], closed = new Atom(false)
-
-  this[$in] = new InputPort(buffer, takes, puts, closed)
-  this[$out] = new OutputPort(buffer, takes, puts, closed)
+  this[$in] = new InputPort(this)
+  this[$out] = new OutputPort(this)
 }
 Channel.prototype = {
   constructor: Channel,
