@@ -43,12 +43,12 @@
     ]
   },
   "dependencies": {
-    "es6-promise": "~0.1.1",
-    "gnode": "~0.0.7"
+    "es6-promise": "~0.1.1"
   },
   "devDependencies": {
     "tape": "~2.3.2",
     "tap": "~0.4.8",
-    "stringencoding": "~0.0.0"
+    "stringencoding": "~0.0.0",
+    "gnode": "~0.0.7"
   }
 }

@@ -13,8 +13,4 @@ exports.UnblockingBuffer = buffer.UnblockingBuffer
 exports.SlidingBuffer = buffer.SlidingBuffer
 exports.DroppingBuffer = buffer.DroppingBuffer
 exports.ByteBuffer = buffer.ByteBuffer
-// Wrap actual spawn in order to avoid loading gnode unless
-// it's really necessary.
-exports.spawn = function(routine) {
-  return require("./spawn").spawn(routine)
-}
+exports.spawn = require("./spawn").spawn
