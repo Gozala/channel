@@ -6,7 +6,8 @@ var Port = require("../index").Port
 var InputPort = require("../index").InputPort
 var OutputPort = require("../index").OutputPort
 var Select = require("../index").Select
-var Promise = require('es6-promise').Promise
+var Promise = require("es6-promise").Promise
+var FixedBuffer = require("../index").FixedBuffer
 
 test("unbufferred channels block", function(test) {
   var ch = new Channel();
@@ -81,15 +82,15 @@ function assertOperation(isPending, value, test, operation) {
       operation.valueOf()
     }, "Can not dereference result of pending operation")
   } else {
-    test.equal(operation.valueOf(), value,
-               "operation dereferenced to result value")
+    test.deepEqual(operation.valueOf(), value,
+                   "operation dereferenced to result value")
   }
 
 
   return operation.then(function(result) {
-    test.equal(result, value, "resolves to " + value)
+    test.deepEqual(result, value, "resolves to " + value)
     test.equal(operation.isPending(), false, "operation is complete")
-    test.equal(operation.valueOf(), value, "operation is dereferenced to " + value)
+    test.deepEqual(operation.valueOf(), value, "operation is dereferenced to " + value)
   })
 }
 
@@ -99,10 +100,10 @@ var assertPendingPut = function(test, put) {
 var assertCompletePut = function(test, put) {
   return assertOperation(false, true, test, put)
 }
-var asserPendingTake = function(test, take, value) {
+var assertPendingTake = function(test, take, value) {
   return assertOperation(true, value, test, take)
 }
-var asserCompleteTake = function(test, take, value) {
+var assertCompleteTake = function(test, take, value) {
   return assertOperation(false, value, test, take)
 }
 
@@ -126,31 +127,111 @@ test("bufferred channels", function(test) {
   tasks.push(assertPendingPut(test, p5))
 
   var t1 = c.input.take()
-  tasks.push(asserCompleteTake(test, t1, 1))
+  tasks.push(assertCompleteTake(test, t1, 1))
 
   var t2 = c.input.take()
-  tasks.push(asserCompleteTake(test, t2, 2))
+  tasks.push(assertCompleteTake(test, t2, 2))
 
   var t3 = c.input.take()
-  tasks.push(asserCompleteTake(test, t3, 3))
+  tasks.push(assertCompleteTake(test, t3, 3))
 
   var t4 = c.input.take()
-  tasks.push(asserCompleteTake(test, t4, 4))
+  tasks.push(assertCompleteTake(test, t4, 4))
 
   var t5 = c.input.take()
-  tasks.push(asserCompleteTake(test, t5, 5))
+  tasks.push(assertCompleteTake(test, t5, 5))
 
   var t6 = c.input.take()
-  tasks.push(asserPendingTake(test, t6, 6))
+  tasks.push(assertPendingTake(test, t6, 6))
 
   var t7 = c.input.take()
-  tasks.push(asserPendingTake(test, t7, 7))
+  tasks.push(assertPendingTake(test, t7, 7))
 
   var p6 = c.output.put(6)
   tasks.push(assertCompletePut(test, p6))
 
   var p7 = c.output.put(7)
   tasks.push(assertCompletePut(test, p7))
+
+  Promise.all(tasks).then(function() { test.end() })
+})
+
+
+
+test("channels with custom buffering", function(test) {
+  var tasks = []
+
+  function Aggregate(size) {
+    FixedBuffer.call(this, size)
+    this.buffer = []
+  }
+  Aggregate.prototype = Object.create(FixedBuffer.prototype)
+  Aggregate.prototype.isEmpty = function() {
+    return this.buffer.length === 0
+  }
+  Aggregate.prototype.isFull = function() {
+    return this.buffer.length === this.size
+  }
+  Aggregate.prototype.put = function(chunk) {
+    this.buffer.push(chunk)
+  }
+  Aggregate.prototype.take = function() {
+    return this.buffer.splice(0)
+  }
+
+  var buffer = new Aggregate(3)
+  var c = new Channel(buffer)
+
+  var t1 = c.input.take()
+  tasks.push(assertPendingTake(test, t1, [1]))
+  var t2 = c.input.take()
+  tasks.push(assertPendingTake(test, t2, [2]))
+
+  var p1 = c.output.put(1)
+  tasks.push(assertCompletePut(test, p1))
+  test.equal(buffer.isEmpty(), true, "buffer is empty")
+  test.equal(buffer.isFull(), false, "buffer isn't full")
+
+  var p2 = c.output.put(2)
+  tasks.push(assertCompletePut(test, p2))
+  test.equal(buffer.isEmpty(), true, "buffer is empty")
+  test.equal(buffer.isFull(), false, "buffer isn't full")
+
+  var p3 = c.output.put(3)
+  tasks.push(assertCompletePut(test, p3))
+  test.equal(buffer.isEmpty(), false, "put was bufferred")
+  test.equal(buffer.isFull(), false, "buffer isn't full")
+  test.deepEqual(buffer.buffer, [3], "put was bufferred")
+
+  var p4 = c.output.put(4)
+  tasks.push(assertCompletePut(test, p4))
+  test.equal(buffer.isEmpty(), false, "put was bufferred")
+  test.equal(buffer.isFull(), false, "buffer isn't full")
+  test.deepEqual(buffer.buffer, [3, 4], "put was bufferred")
+
+  var p5 = c.output.put(5)
+  tasks.push(assertCompletePut(test, p5))
+  test.equal(buffer.isEmpty(), false, "put was bufferred")
+  test.equal(buffer.isFull(), true, "buffer isn't full")
+  test.deepEqual(buffer.buffer, [3, 4, 5], "put was bufferred")
+
+  var p6 = c.output.put(6)
+  tasks.push(assertPendingPut(test, p6))
+  test.equal(buffer.isEmpty(), false, "put was bufferred")
+  test.equal(buffer.isFull(), true, "buffer isn't full")
+  test.deepEqual(buffer.buffer, [3, 4, 5], "put was queued")
+
+  var t3 = c.input.take()
+  tasks.push(assertCompleteTake(test, t3, [3, 4, 5]))
+  test.equal(buffer.isEmpty(), false, "queued put was bufferred")
+  test.equal(buffer.isFull(), false, "buffer was drained")
+  test.deepEqual(buffer.buffer, [6], "queued put was moved to buffer")
+
+  var t4 = c.input.take()
+  tasks.push(assertCompleteTake(test, t4, [6]))
+  test.equal(buffer.isEmpty(), true, "buffer is empty")
+  test.equal(buffer.isFull(), false, "buffer was drained")
+  test.deepEqual(buffer.buffer, [], "buffer is empty")
 
   Promise.all(tasks).then(function() { test.end() })
 })

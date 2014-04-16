@@ -117,6 +117,22 @@ Put.prototype = Object.create(Operation.prototype)
 Put.prototype.constructor = Put
 Put.prototype.Put = Put
 
+function dequeue(queue) {
+  while (queue.length) {
+    var operation = queue.pop()
+    if (operation[$isActive]())
+      return operation
+  }
+}
+
+function enqueue(queue, operation) {
+  if (queue.length >=  MAX_QUEUE_SIZE) {
+    throw new Error("No more than " + MAX_QUEUE_SIZE +
+                    " pending operations are allowed on a single channel.")
+  } else {
+    queue.unshift(operation)
+  }
+}
 
 function take(port, race) {
   if (!(port instanceof InputPort))
@@ -171,6 +187,7 @@ function take(port, race) {
   return take
 }
 
+
 function put(port, value, race) {
   if (!(port instanceof OutputPort))
     throw TypeError("Can only put onto output port")
@@ -187,35 +204,49 @@ function put(port, value, race) {
     if (closed.valueOf()) {
       put[$complete](void(0))
     }
+    // If value is `undefined` such puts are
+    // just dropped.
     else if (value === void(0)) {
       put[$complete](true)
     }
     else {
-      var take = void(0)
-      while (take = takes.pop()) {
-        if (take[$isActive]()) break;
-      }
-
-      // If channel has a pending "take" resolve it
-      // and resolve result.
-
-      if (take) {
-        take[$complete](value)
-        put[$complete](true)
-      }
-      // If channel's buffer can accumulate more data
-      // unshift a value and resolve result to `true`.
-      else if (buffer === void(0) || buffer.isFull()) {
-        if (puts.length >=  MAX_QUEUE_SIZE) {
-          throw new Error("No more than " + MAX_QUEUE_SIZE +
-                          " pending puts are allowed on a single channel." +
-                          " Consider using a windowed buffer.")
-        } else {
-          puts.unshift(put)
+      // If it's a unbuffered channel
+      if (buffer === void(0)) {
+        // Dequeue active take. If such take exists complete
+        // both put & take operations.
+        var take = dequeue(takes)
+        if (take) {
+          put[$complete](true)
+          take[$complete](value)
         }
-      } else {
-        put[$complete](true)
-        buffer.put(value)
+        // If no active take is in a queue then enqueue put.
+        else {
+          enqueue(puts, put)
+        }
+      }
+      // If channel is bufferred.
+      else {
+        // If buffer is full enqueu put operation.
+        if (buffer.isFull()) {
+          enqueue(puts, put)
+        }
+        // If buffer isn't full put value into a buffer and
+        // complete a put operation.
+        else {
+          buffer.put(value)
+          put[$complete](true)
+
+          // If buffer is no longer empty (note that some
+          // buffers may remain empty until certain amount
+          // of data is bufferred), dequeu active take and
+          // complete it with value taken from buffer.
+          if (!buffer.isEmpty()) {
+            var take = dequeue(takes)
+            if (take) {
+              take[$complete](buffer.take())
+            }
+          }
+        }
       }
     }
   }
