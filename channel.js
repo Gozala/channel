@@ -12,30 +12,18 @@ var $puts = "@@channel/pending-puts"
 var $takes = "@@channel/pending-takes"
 var $in = "@@channel/in"
 var $out = "@@channel/out"
-var $race = "@@channel/race"
-var $value = "@@atom/value"
+var $select = "@@channel/select"
+var $value = "@@operation/value"
+var $resolve = "@@operation/resolve"
+var $init = "@@operation/init"
+var $result = "@@operation/result"
+var $isActive = "@@operation/active?"
+var $complete = "@@operation/complete"
+var $choice = "@@select/choice"
 
 var MAX_QUEUE_SIZE = Infinity // 1024
 
-// This is a simple class for representing shared
-// mutable state, mainly useful for primitive values.
-function Atom(value) {
-  this[$value] = value
-}
-Atom.prototype.Atom = Atom
-Atom.prototype.reset = function(value) {
-  this[$value] = value
-}
-Atom.prototype.valueOf = function() {
-  return this[$value]
-}
 
-var $resolve = "@@task/resolve"
-var $init = "@@task/init"
-var $promise = "@@task/promise"
-var $result = "@@task/result"
-var $isActive = "@@task/active?"
-var $complete = "@@task/complete"
 
 // This is repreestantion of the pending (or complete)
 // taks. Channels use instances of a subclasses like `Put`
@@ -47,8 +35,8 @@ var $complete = "@@task/complete"
 // dropped. Once this task is complete it's gonig to reset
 // it's race to truthy, which mainly used to share `race`
 // when racing multiple tasks where only one should be complete.
-function Operation(race) {
-  this[$race] = race || false
+function Operation(select) {
+  this[$select] = select || this
   Promise.call(this, this[$init].bind(this))
 }
 Operation.prototype = Object.create(Promise.prototype)
@@ -65,58 +53,31 @@ Operation.prototype.valueOf = function() {
 Operation.prototype[$init] = function(resolve, _) {
   this[$resolve] = resolve
 }
-// If task is pending method returns `false` if task task was complete,
-// which means this task won the race.
+// If operation is pending method returns `false`, which is the case
+// unless associated selecet has a choice set to this.
 Operation.prototype.isPending = function() {
   // When task is resolved race is updated to the winner, if
   // this task has no race or if it's not a winner of this race
   // task is considered pending.
-  return this[$race] !== this &&
-         this[$race].valueOf() !== this
+  return this[$select][$choice] !== this
 }
-// Operation is active if this and all other tasks sharing same race are
-// pending.
+// Operation is active if select associated with it does not has a
+// choice set yet.
 Operation.prototype[$isActive] = function() {
-  return !this[$race].valueOf()
+  return this[$select][$choice] == void(0)
 }
 // Completes pending task, by reseting shared `timout` to `true`
 // and by fullfilling promise representing completion of this
 // task.
-Operation.prototype[$complete] = function(value) {
-  if (this[$race])
-    this[$race].reset(this)
-  else
-    this[$race] = this
+Operation.prototype[$complete] = function(result) {
+  if (!this[$isActive]())
+    throw Error("Can't complete inactive operation")
 
-  // If promise was allocated resolve it, otherwise just skip this
-  // step.
-  if (this[$resolve])
-    this[$resolve](value)
-
-  this[$result] = value
+  this[$select][$choice] = this
+  this[$result] = result
+  this[$resolve](result)
 }
 
-
-// Take is just a specialized `Operation` used to represent
-// pending takes from the channel.
-function Take(race) {
-  this.Operation(race)
-}
-Take.prototype = Object.create(Operation.prototype)
-Take.prototype.constructor = Take
-Take.prototype.Take = Take
-
-
-// Put is just a specialized `Operation` used to represent
-// pending puts onto the channel. Additionally it has
-// `value` field representing `value` it tries to put.
-function Put(value, race) {
-  this.value = value
-  this.Operation(race)
-}
-Put.prototype = Object.create(Operation.prototype)
-Put.prototype.constructor = Put
-Put.prototype.Put = Put
 
 // Takes operation queue in form of array and pops operations
 // until first active one is discovered, which is returned back.
@@ -140,7 +101,22 @@ function enqueue(queue, operation) {
   }
 }
 
-function take(port, race) {
+function close(port) {
+  var channel = port[$channel]
+  var takes = channel[$takes]
+
+  if (!channel[$closed]) {
+    channel[$closed] = true
+    // Void all queued takes.
+    while (takes.length > 0) {
+      var take = takes.pop()
+      if (take[$isActive]())
+        take[$complete](void(0))
+    }
+  }
+}
+
+function take(port, select) {
   if (!(port instanceof InputPort))
     throw TypeError("Can only take from input port")
 
@@ -148,8 +124,7 @@ function take(port, race) {
   var buffer = channel[$buffer]
   var puts = channel[$puts]
   var takes = channel[$takes]
-  var closed = channel[$closed]
-  var take = new Take(race)
+  var take = new Operation(select)
 
   if (take[$isActive]()) {
     // If there is buffered values take first one that
@@ -160,9 +135,9 @@ function take(port, race) {
         var put = void(0)
         while (!buffer.isFull() && (put = dequeue(puts))) {
           put[$complete](true)
-          buffer.put(put.value)
+          buffer.put(put[$value])
         }
-      } else if (closed.valueOf()) {
+      } else if (channel[$closed]) {
         take[$complete](void(0))
       } else {
         enqueue(takes, take)
@@ -171,8 +146,8 @@ function take(port, race) {
       var put = dequeue(puts)
       if (put) {
         put[$complete](true)
-        take[$complete](put.value)
-      } else if (closed.valueOf()) {
+        take[$complete](put[$value])
+      } else if (channel[$closed]) {
         take[$complete](void(0))
       } else {
         enqueue(takes, take)
@@ -183,7 +158,7 @@ function take(port, race) {
 }
 
 
-function put(port, value, race) {
+function put(port, value, select) {
   if (!(port instanceof OutputPort))
     throw TypeError("Can only put onto output port")
 
@@ -191,13 +166,12 @@ function put(port, value, race) {
   var buffer = channel[$buffer]
   var puts = channel[$puts]
   var takes = channel[$takes]
-  var closed = channel[$closed]
-  var put = new Put(value, race)
+  var put = new Operation(select)
 
   if (put[$isActive]()) {
     // If channel is already closed then
     // void resulting promise.
-    if (closed.valueOf()) {
+    if (channel[$closed]) {
       put[$complete](void(0))
     }
     // If value is `undefined` such puts are
@@ -217,6 +191,7 @@ function put(port, value, race) {
         }
         // If no active take is in a queue then enqueue put.
         else {
+          put[$value] = value
           enqueue(puts, put)
         }
       }
@@ -224,6 +199,7 @@ function put(port, value, race) {
       else {
         // If buffer is full enqueu put operation.
         if (buffer.isFull()) {
+          put[$value] = value
           enqueue(puts, put)
         }
         // If buffer isn't full put value into a buffer and
@@ -264,19 +240,7 @@ Port.prototype.Port = Port
 // state is also reset to `true` to reflect
 // it on both ends of the channel.
 Port.prototype.close = function() {
-  var channel = this[$channel]
-  var closed = channel[$closed]
-  var takes = channel[$takes]
-
-  if (!closed.valueOf()) {
-    closed.reset(true)
-    // Void all queued takes.
-    while (takes.length > 0) {
-      var take = takes.pop()
-      if (take[$isActive]())
-        take[$complete](void(0))
-    }
-  }
+  return close(this)
 }
 exports.Port = Port
 
@@ -315,7 +279,7 @@ function Channel(buffer) {
                   buffer
   this[$puts] = []
   this[$takes] = []
-  this[$closed] = new Atom(false)
+  this[$closed] = false
 
   this[$in] = new InputPort(this)
   this[$out] = new OutputPort(this)
@@ -350,13 +314,13 @@ exports.Channel = Channel
 // Note that only one of the above three operations is
 // going to succeed.
 function Select() {
-  this[$race] = new Atom(false)
+  this[$choice] = void(0)
 }
 Select.prototype.Select = Select
 Select.prototype.put = function(port, value) {
-  return put(port, value, this[$race])
+  return put(port, value, this)
 }
 Select.prototype.take = function(port) {
-  return take(port, this[$race])
+  return take(port, this)
 }
 exports.Select = Select
