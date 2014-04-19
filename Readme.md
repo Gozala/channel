@@ -72,18 +72,30 @@ While generators make use of channels a lot more expressive, they are not a requ
 
 ```js
 function pipe(input, output, close) {
+  // Utility function reads chunk from the input and waits
+  // until operation is complete, then continue with write
+  // by passing result of take to it.
   function read() {
     input.take().then(write)
   }
 
+  // Utility function is given a chunk of `data`.
   function write(data) {
+    // If `data` is void then `input` is closed. If `close`
+    // was passed as `true` close `output` port otherwise
+    // leave it open.
     if (data === void(0)) {
       if (close) output.close()
-    } else {
+    }
+    // If actual `data` was passed put it onto `output`
+    // port and wait until opeartion is complete, then continue
+    // with read.
+    else {
       output.put(data).then(read)
     }
   }
 
+  // Initiate read / write loop.
   read()
 }
 ```
@@ -92,42 +104,51 @@ As you make have notice `take` and `put` return promises, which is partially tru
 
 ```js
 function pipe(input, output, close) {
-  var operation = void(0)
-  var state = void(0)
+  // `operation` will hold an operation currently being handled.
+  // Initially we start by takeing data from `input`.
+  var operation = input.take()
+  // `state` will be set to either `"take"` or `"put"` to indicating
+  // type of operation being handled. Initial we start with "take".
+  var state = "take"
 
-  // switch to take
-  function take() {
-    state = take
-    operation = input.take()
-  }
-
-  // switch to put
-  function put(value) {
-    state = put
-    operation = input.put(value)
-  }
-
-  function pump() {
+  // Utility function represnting represents task that runs operation
+  // loop. It alternates between "take" and "put" operations until
+  // hit the pending one. In which case task is suspended and resumed
+  // once pending operation is complete.
+  function run() {
+    // Keep handling operations until hit the one that is pending.
     while (!operation.isPending()) {
-      var value = operation.valueOf()
-      // If we reached the end & close is true
-      // close output & return.
-      if (value === void(0))
+      // Since `operation` is not pending it's result can be
+      // accessed right away.
+      var result = operation.valueOf()
+      // If `result` is `void` then channel is closed. In such case
+      // close `output` if `closed` was passed as true & abort the
+      // task.
+      if (result === void(0)) {
         return close && output.close()
-      // If we took value put it to output.
-      else if (state === take)
-        put(value)
-      // If we put value now take on from input.
-      else if (state === put)
-        take()
+      }
+      // If state machine is in `take` state then switch it
+      // to `put` state, passing along the result of the take
+      // operation.
+      else if (state === "take") {
+        state = "put"
+        operation = output.put(result)
+      }
+      // If state machine is in a `put` state then switch it
+      // to `take` state.
+      else if (state === put) {
+        state = "take"
+        operation = input.take()
+      }
     }
-    // If loop was escaped then operation is pending
-    // so resume the loop after it's complete.
-    operation.then(pump)
+
+    // If operation loop was escaped, then current operation is pending.
+    // In such case re-run the task once operation is complete.
+    operation.then(run)
   }
 
-  take()
-  pump()
+  // Initiate the run loop.
+  run()
 }
 ```
 
